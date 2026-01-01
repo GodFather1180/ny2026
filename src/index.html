@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Firework Writing NYE</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
+
+
+<style>
+  :root{
+    --bg0:#070717;
+    --bg1:#0b0b1f;
+    --glass: rgba(255,255,255,0.10);
+    --stroke: rgba(255,255,255,0.18);
+  }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background:
+      radial-gradient(1100px 760px at 50% 32%, rgba(145,120,255,0.18), transparent 60%),
+      radial-gradient(900px 700px at 18% 78%, rgba(0,235,255,0.14), transparent 58%),
+      radial-gradient(900px 700px at 88% 80%, rgba(255,80,180,0.14), transparent 58%),
+      linear-gradient(180deg, var(--bg1), var(--bg0));
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  canvas#fx {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  .vignette{
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at center,
+        rgba(0,0,0,0) 45%,
+        rgba(0,0,0,0.38) 100%);
+    mix-blend-mode: multiply;
+  }
+
+  .hud{
+    position: fixed;
+    left: 16px;
+    bottom: 14px;
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(0,0,0,0.22);
+    border: 1px solid var(--stroke);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    color: rgba(255,255,255,0.85);
+    font-size: 12px;
+    user-select: none;
+  }
+  .pill{
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.08);
+    font-weight: 750;
+    letter-spacing: .2px;
+  }
+  .dim{ color: rgba(255,255,255,0.68); }
+
+  @media (prefers-reduced-motion: reduce){
+    .hud{ display:none; }
+  }
+</style>
+</head>
+
+<body>
+  <canvas id="fx"></canvas>
+  <div class="vignette"></div>
+
+  <div class="hud" aria-hidden="true">
+    <span class="pill">NYE</span>
+    <span><b>Tap</b> anywhere for fireworks <span class="dim">•</span> <span class="dim">Auto quality</span></span>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById("fx");
+  const ctx = canvas.getContext("2d", { alpha: true });
+
+  const prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ============================================================
+  // PERF / QUALITY knobs (auto-adjust)
+  // ============================================================
+  let QUALITY = prefersReduced ? 0.55 : 0.85;   // 0.35..1.0
+  const DPR_CAP_HIGH = 1.5;
+  const DPR_CAP_LOW  = 1.0;
+  let dprCap = DPR_CAP_HIGH;
+
+  let avgDt = 16; // ms
+  let lastNow = performance.now();
+  let perfSample = 0;
+
+  const rand = (a,b)=>a + Math.random()*(b-a);
+  const clamp = (v,a,b)=>Math.max(a, Math.min(b, v));
+
+  function resize(){
+    // keep it smooth: cap DPR based on current quality
+    const dpr = Math.max(1, Math.min(dprCap, window.devicePixelRatio || 1));
+    canvas.width  = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width  = innerWidth + "px";
+    canvas.style.height = innerHeight + "px";
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  addEventListener("resize", resize, { passive:true });
+  resize();
+
+  // ============================================================
+  // Fade / blend (slightly less dark overall)
+  // ============================================================
+  function fadeBg(){
+    ctx.globalCompositeOperation = "source-over";
+    // lower alpha = brighter trails + less “darkness”
+    ctx.fillStyle = "rgba(0,0,0,0.12)";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+    ctx.globalCompositeOperation = "lighter";
+  }
+
+  // ============================================================
+  // Fireworks particles (optimized: minimal shadow + batching)
+  // ============================================================
+  const particles = [];
+  const rockets = [];
+  const gravity = 0.055;
+  const air = 0.985;
+
+  // Keep counts bounded (BIG perf win)
+  function trimArrays(){
+    const maxParticles = Math.floor(900 * QUALITY);
+    const maxInk = 16000; // large but bounded
+    if(particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
+    if(ink.length > maxInk) ink.splice(0, ink.length - maxInk);
+  }
+
+  function burst(x, y, hue = rand(0,360)){
+    const n = Math.floor(rand(70, 120) * QUALITY); // fewer particles
+    const base = rand(2.4, 5.2);
+
+    // quick ring flash (no heavy blur)
+    particles.push({ x,y, a:0.55, dec:0.10, h:hue, s:rand(14,26), flash:true });
+
+    for(let i=0;i<n;i++){
+      const ang = rand(0, Math.PI*2);
+      const sp = base * rand(0.45, 1.12);
+      particles.push({
+        x, y, px:x, py:y,
+        vx: Math.cos(ang)*sp,
+        vy: Math.sin(ang)*sp,
+        a: 1,
+        dec: rand(0.010, 0.018), // die faster
+        h: (hue + rand(-14,14) + 360) % 360,
+        s: rand(0.8, 1.8),
+        lw: rand(0.8, 1.4),
+        spark: Math.random() < 0.20
+      });
+    }
+    trimArrays();
+  }
+
+  function launchRocket(x, y = innerHeight, hue = rand(0,360), targetY = rand(innerHeight*0.12, innerHeight*0.42)){
+    rockets.push({
+      x, y,
+      vx: rand(-0.7, 0.7),
+      vy: rand(-10.0, -13.0),
+      h: hue,
+      targetY,
+      trail:[]
+    });
+  }
+
+  function updateRockets(){
+    for(let i=rockets.length-1;i>=0;i--){
+      const r = rockets[i];
+      r.vx *= air; r.vy *= air;
+      r.vy += gravity * 0.45;
+      r.x += r.vx; r.y += r.vy;
+
+      r.trail.push({x:r.x, y:r.y});
+      const maxTrail = Math.floor(18 + 10*QUALITY);
+      if(r.trail.length > maxTrail) r.trail.shift();
+
+      // trail (NO shadowBlur = huge perf win)
+      for(let t=1;t<r.trail.length;t++){
+        const p0 = r.trail[t-1];
+        const p1 = r.trail[t];
+        const a = t / r.trail.length;
+        ctx.lineWidth = 1.1;
+        ctx.strokeStyle = `hsla(${r.h},100%,74%,${a*0.22})`;
+        ctx.beginPath();
+        ctx.moveTo(p0.x, p0.y);
+        ctx.lineTo(p1.x, p1.y);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = `hsla(${r.h},100%,78%,0.95)`;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 2.2, 0, Math.PI*2);
+      ctx.fill();
+
+      if(r.y <= r.targetY || r.vy > -1.0){
+        burst(r.x, r.y, r.h);
+        rockets.splice(i,1);
+      }
+    }
+  }
+
+  function updateParticles(){
+    // batch draw by reducing state changes (we still draw individually but keep it light)
+    for(let i=particles.length-1;i>=0;i--){
+      const p = particles[i];
+      p.a -= p.dec;
+
+      if(p.flash){
+        const a = Math.max(0, p.a);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = `hsla(${p.h},100%,82%,${a})`;
+        ctx.beginPath();
+        ctx.arc(p.x,p.y,p.s,0,Math.PI*2);
+        ctx.stroke();
+      } else {
+        p.px = p.x; p.py = p.y;
+        p.vx *= air; p.vy *= air;
+        p.vy += gravity;
+        p.x += p.vx; p.y += p.vy;
+
+        const a = Math.max(0, p.a);
+        const lum = p.spark ? 86 : 78;
+
+        // streak
+        ctx.lineWidth = p.lw;
+        ctx.strokeStyle = `hsla(${p.h},100%,${lum}%,${a})`;
+        ctx.beginPath();
+        ctx.moveTo(p.px, p.py);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+
+        // dot
+        ctx.fillStyle = `hsla(${p.h},100%,${lum+4}%,${a})`;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.s, 0, Math.PI*2);
+        ctx.fill();
+      }
+
+      if(p.a <= 0) particles.splice(i,1);
+    }
+  }
+
+  // ============================================================
+  // Firework-writing that STAYS
+  // Big perf win: draw ink into an offscreen canvas once, then blit.
+  // ============================================================
+  const stamp = document.createElement("canvas");
+  const sctx = stamp.getContext("2d");
+
+  const inkLayer = document.createElement("canvas");
+  const ik = inkLayer.getContext("2d");
+  function resizeInkLayer(){
+    inkLayer.width = canvas.width;
+    inkLayer.height = canvas.height;
+    // reset transform for drawing in CSS pixels
+    const dpr = canvas.width / innerWidth;
+    ik.setTransform(dpr,0,0,dpr,0,0);
+    ik.clearRect(0,0,innerWidth,innerHeight);
+  }
+  resizeInkLayer();
+  addEventListener("resize", resizeInkLayer, { passive:true });
+
+  const writers = [];
+  const ink = []; // still keep for bounds, but we render to inkLayer when added
+
+  function sampleTextPoints(text, fontPx, weight){
+    const font = `${weight} ${fontPx}px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
+    sctx.font = font;
+    const mw = Math.ceil(sctx.measureText(text).width);
+
+    stamp.width  = Math.max(1, mw + Math.ceil(fontPx*1.4));
+    stamp.height = Math.max(1, Math.ceil(fontPx*1.9));
+
+    sctx.clearRect(0,0,stamp.width,stamp.height);
+    sctx.textAlign = "center";
+    sctx.textBaseline = "middle";
+    sctx.font = font;
+    sctx.fillStyle = "white";
+    sctx.fillText(text, stamp.width/2, stamp.height/2);
+
+    const img = sctx.getImageData(0,0,stamp.width,stamp.height).data;
+    const pts = [];
+    const step = Math.max(2, Math.floor(fontPx / 26)); // denser, but still sane
+
+    for(let y=0;y<stamp.height;y+=step){
+      for(let x=0;x<stamp.width;x+=step){
+        const a = img[(y*stamp.width + x)*4 + 3];
+        if(a > 18) pts.push({x, y});
+      }
+    }
+    return { pts, w: stamp.width, h: stamp.height };
+  }
+
+  function addInkDot(x,y,h){
+    const dx = x + rand(-0.35,0.35);
+    const dy = y + rand(-0.35,0.35);
+    const s  = rand(0.9, 1.65);
+
+    // store a little (for bounds only)
+    ink.push({x:dx,y:dy,h,s});
+    // draw ONCE onto inkLayer (major perf)
+    ik.fillStyle = `hsla(${h},100%,84%,0.98)`;
+    ik.beginPath();
+    ik.arc(dx, dy, s, 0, Math.PI*2);
+    ik.fill();
+  }
+
+  function drawInkLayer(){
+    // add a soft halo behind the whole message (cheap + makes text “less dark”)
+    // Only draw halo for the first few seconds and then occasionally to keep it subtle
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = 0.26;
+    ctx.filter = "blur(8px)";
+    ctx.drawImage(inkLayer, 0, 0, innerWidth, innerHeight);
+    ctx.filter = "none";
+    ctx.globalAlpha = 1;
+    ctx.drawImage(inkLayer, 0, 0, innerWidth, innerHeight);
+    ctx.restore();
+  }
+
+  function spawnWritingAnchored(text, anchor, y, fontPx, weight=900){
+    const { pts, w, h } = sampleTextPoints(text, fontPx, weight);
+    const pad = Math.max(18, Math.floor(Math.min(innerWidth, innerHeight) * 0.04));
+
+    let cx;
+    if(anchor === "left")  cx = pad + w/2;
+    if(anchor === "right") cx = innerWidth - pad - w/2;
+    if(anchor === "center")cx = innerWidth/2;
+
+    const ox = cx - w/2;
+    const oy = y - h/2;
+
+    const pick = Math.min(pts.length, Math.floor(pts.length * 0.92));
+
+    // small burst near the text, but lighter
+    burst(cx + rand(-26,26), y + rand(-16,16), rand(0,360));
+
+    for(let i=0;i<pick;i++){
+      const p = pts[(Math.random()*pts.length)|0];
+      const tx = ox + p.x;
+      const ty = oy + p.y;
+
+      const sx = tx + rand(-240, 240);
+      const sy = ty + rand(260, 640);
+
+      writers.push({
+        x:sx, y:sy, px:sx, py:sy,
+        tx, ty,
+        vx: rand(-1.2, 1.2),
+        vy: rand(-7.4, -3.6),
+        h: rand(0,360),
+        s: rand(0.9, 2.0),
+        lw: rand(0.8, 1.4)
+      });
+    }
+  }
+
+  function updateWriters(){
+    for(let i=writers.length-1;i>=0;i--){
+      const w = writers[i];
+      w.px = w.x; w.py = w.y;
+
+      const dx = w.tx - w.x;
+      const dy = w.ty - w.y;
+      const dist = Math.hypot(dx,dy) || 1;
+
+      const pull = 0.36;
+      w.vx = (w.vx * 0.86) + (dx/dist)*pull + rand(-0.02, 0.02);
+      w.vy = (w.vy * 0.86) + (dy/dist)*pull + gravity*0.08 + rand(-0.02, 0.02);
+      w.x += w.vx; w.y += w.vy;
+
+      ctx.lineWidth = w.lw;
+      ctx.strokeStyle = `hsla(${w.h},100%,76%,0.92)`;
+      ctx.beginPath();
+      ctx.moveTo(w.px, w.py);
+      ctx.lineTo(w.x, w.y);
+      ctx.stroke();
+
+      ctx.fillStyle = `hsla(${w.h},100%,86%,0.95)`;
+      ctx.beginPath();
+      ctx.arc(w.x, w.y, w.s, 0, Math.PI*2);
+      ctx.fill();
+
+      if(dist < 5){
+        addInkDot(w.tx, w.ty, w.h);
+        writers.splice(i,1);
+      }
+    }
+  }
+
+  // ============================================================
+  // Safe zones
+  // ============================================================
+  const layout = {
+    happy: { text:"HAPPY",    anchor:"left",   yPct: 0.20, fontScale: 0.14 },
+    newy:  { text:"NEW YEAR", anchor:"right",  yPct: 0.20, fontScale: 0.14 },
+    name:  { text:"CIANNA",   anchor:"center", yPct: 0.46, fontScale: 0.18 }
+  };
+
+  function computeTextBox(text, anchor, y, fontPx, weight=900){
+    sctx.font = `${weight} ${fontPx}px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
+    const w = Math.ceil(sctx.measureText(text).width) + Math.ceil(fontPx*1.25);
+    const h = Math.ceil(fontPx*1.45);
+
+    const pad = Math.max(18, Math.floor(Math.min(innerWidth, innerHeight) * 0.04));
+    let cx;
+    if(anchor === "left")   cx = pad + w/2;
+    if(anchor === "right")  cx = innerWidth - pad - w/2;
+    if(anchor === "center") cx = innerWidth/2;
+
+    return { x: cx - w/2, y: y - h/2, w, h };
+  }
+
+  function getSafeZones(){
+    const base = Math.min(innerWidth, innerHeight);
+    const zones = [];
+    for(const k of ["happy","newy","name"]){
+      const item = layout[k];
+      const fontPx = Math.floor(base * item.fontScale);
+      const y = innerHeight * item.yPct;
+      const b = computeTextBox(item.text, item.anchor, y, fontPx, 900);
+      const pad = Math.max(42, Math.floor(fontPx * 0.65));
+      zones.push({ x: b.x - pad, y: b.y - pad, w: b.w + pad*2, h: b.h + pad*2 });
+    }
+    return zones;
+  }
+
+  function pointInRect(px,py,r){
+    return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h;
+  }
+
+  function pickSafePoint(zones, x0, x1, y0, y1, tries=70){
+    for(let i=0;i<tries;i++){
+      const x = rand(x0, x1);
+      const y = rand(y0, y1);
+      if(!zones.some(z => pointInRect(x,y,z))) return {x,y};
+    }
+    return { x: innerWidth*0.5, y: innerHeight*0.12 };
+  }
+
+  // ============================================================
+  // Compliments (nice font + fewer + lighter)
+  // ============================================================
+  const textBursts = [];
+  const compliments = [
+    "IT'S OUR year TRUST ✨",
+    "Baddie",
+    "so gorgeous",
+    "main character",
+    "QUEEN FR",
+    "icon.",
+    "u da real baddie queen",
+  ];
+
+const complimentFont =
+  `700 34px "Caveat", "Kalam", ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
+
+  function spawnCompliment(zones){
+    // fewer total compliments = smoother
+    if(textBursts.length > Math.floor(7 * QUALITY)) return;
+
+    const p = pickSafePoint(
+      zones,
+      innerWidth*0.10, innerWidth*0.90,
+      innerHeight*0.66, innerHeight*0.95
+    );
+    const txt = compliments[(Math.random()*compliments.length)|0];
+
+    textBursts.push({
+      x: p.x,
+      y: p.y,
+      vx: rand(-0.14, 0.14),
+      vy: rand(-0.62, -0.35),
+      a: 1,
+      life: rand(150, 240),
+      age: 0,
+      rot: rand(-0.03, 0.03),
+      vr: rand(-0.0008, 0.0008),
+      h: rand(0,360),
+      txt
+    });
+  }
+
+  function updateCompliments(zones){
+    for(let i=textBursts.length-1;i>=0;i--){
+      const t = textBursts[i];
+      t.age++;
+      const k = t.age / t.life;
+
+      // fade
+      const fadeIn = Math.min(1, k / 0.16);
+      const fadeOut = Math.max(0, (1 - k) / 0.40);
+      t.a = Math.min(fadeIn, fadeOut);
+
+      // motion
+      t.x += t.vx;
+      t.y += t.vy;
+      t.vy += gravity * 0.015;
+      t.rot += t.vr;
+
+      // keep out of safe zones
+      if(zones.some(z => pointInRect(t.x, t.y, z))){
+        t.x += (t.x < innerWidth/2 ? -1 : 1) * 2.2;
+        t.y += 2.4;
+      }
+
+      ctx.save();
+      ctx.translate(t.x, t.y);
+      ctx.rotate(t.rot);
+      ctx.globalAlpha = t.a;
+
+      ctx.font = complimentFont;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      // soft outline for readability (no blur)
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `hsla(${t.h},100%,25%,0.22)`;
+      ctx.strokeText(t.txt, 0, 0);
+      ctx.fillStyle = `hsla(${t.h},100%,90%,0.95)`;
+      ctx.fillText(t.txt, 0, 0);
+
+      ctx.restore();
+      ctx.globalAlpha = 1;
+
+      if(t.age >= t.life || t.a <= 0){
+        textBursts.splice(i,1);
+      }
+    }
+  }
+
+  // ============================================================
+  // Sequence timing
+  // ============================================================
+  let start = performance.now();
+  let doneWriting = false;
+  let step = 0;
+
+  function sequence(now){
+    const t = (now - start)/1000;
+    const base = Math.min(innerWidth, innerHeight);
+
+    const fontSmall = Math.floor(base * layout.happy.fontScale);
+    const fontName  = Math.floor(base * layout.name.fontScale);
+
+    const topY = innerHeight * layout.happy.yPct;
+    const midY = innerHeight * layout.name.yPct;
+
+    if(step === 0 && t > 0.25){
+      spawnWritingAnchored("HAPPY", "left",  topY, fontSmall, 900);
+      step = 1;
+    }
+    if(step === 1 && t > 0.85){
+      spawnWritingAnchored("NEW YEAR", "right", topY, fontSmall, 900);
+      step = 2;
+    }
+    if(step === 2 && t > 1.35){
+      spawnWritingAnchored("CIANNA", "center", midY, fontName, 900);
+      step = 3;
+      doneWriting = true;
+    }
+  }
+
+  // ============================================================
+  // Continuous fireworks (SAFE-ZONE ONLY) - lighter rate
+  // ============================================================
+  let nextLaunch = 0;
+  function scheduleLaunch(now){
+    const base = prefersReduced ? 760 : 520;
+    nextLaunch = now + rand(base, base + 520);
+  }
+
+  function safeLaunch(zones){
+    const burstPt = pickSafePoint(
+      zones,
+      innerWidth*0.12, innerWidth*0.88,
+      innerHeight*0.10, innerHeight*0.55
+    );
+    launchRocket(burstPt.x + rand(-30,30), innerHeight, rand(0,360), burstPt.y);
+  }
+
+  // Click bursts, but not on the safe zones
+  addEventListener("pointerdown", (e)=>{
+    const zones = getSafeZones();
+    if(!zones.some(z => pointInRect(e.clientX, e.clientY, z))){
+      burst(e.clientX, e.clientY, rand(0,360));
+    }
+  }, { passive:true });
+
+  // ============================================================
+  // Main loop + auto quality
+  // ============================================================
+  let nextCompliment = 0;
+  function scheduleCompliment(now){
+    const base = prefersReduced ? 520 : 260;
+    nextCompliment = now + rand(base, base + 420);
+  }
+
+  function autoQuality(now){
+    const dt = now - lastNow;
+    lastNow = now;
+
+    // exponential moving average
+    avgDt = avgDt * 0.92 + dt * 0.08;
+
+    // every ~30 frames, adjust quality
+    perfSample++;
+    if(perfSample < 30) return;
+    perfSample = 0;
+
+    // target ~16.7ms (60fps). If slower, reduce.
+    if(avgDt > 20){
+      QUALITY = clamp(QUALITY * 0.90, 0.40, 1.0);
+      dprCap = DPR_CAP_LOW;     // drop resolution
+      // also clear some load
+      particles.splice(0, Math.floor(particles.length*0.25));
+    } else if(avgDt < 17.5){
+      QUALITY = clamp(QUALITY * 1.03, 0.40, 1.0);
+      dprCap = DPR_CAP_HIGH;
+    }
+    // resize only if dprCap changed materially
+    resize();
+  }
+
+  function frame(now){
+    requestAnimationFrame(frame);
+    autoQuality(now);
+
+    sequence(now);
+    fadeBg();
+
+    // draw main message (cached layer) + writers
+    ctx.globalCompositeOperation = "lighter";
+    drawInkLayer();
+    updateWriters();
+
+    const zones = getSafeZones();
+
+    if(doneWriting && now > nextLaunch){
+      safeLaunch(zones);
+      scheduleLaunch(now);
+    }
+
+    if(now > nextCompliment){
+      // fewer compliments overall
+      spawnCompliment(zones);
+      if(!prefersReduced && Math.random() < 0.18) spawnCompliment(zones);
+      scheduleCompliment(now);
+    }
+
+    updateRockets();
+    updateParticles();
+
+    // compliments last
+    ctx.globalCompositeOperation = "source-over";
+    updateCompliments(zones);
+
+    trimArrays();
+  }
+
+  scheduleLaunch(performance.now());
+  scheduleCompliment(performance.now());
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
