@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Firework Writing NYE</title>
 
+<!-- Handwritten compliments -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600;700&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
-
 
 <style>
   :root{
@@ -54,7 +54,7 @@
   .hud{
     position: fixed;
     left: 16px;
-    bottom: 14px;
+    bottom: calc(env(safe-area-inset-bottom) + 12px); /* iOS safe area */
     display: inline-flex;
     gap: 10px;
     align-items: center;
@@ -99,12 +99,13 @@
   const ctx = canvas.getContext("2d", { alpha: true });
 
   const prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const IS_MOBILE = Math.min(innerWidth, innerHeight) < 600;
 
   // ============================================================
   // PERF / QUALITY knobs (auto-adjust)
   // ============================================================
-  let QUALITY = prefersReduced ? 0.55 : 0.85;   // 0.35..1.0
-  const DPR_CAP_HIGH = 1.5;
+  let QUALITY = prefersReduced ? 0.55 : (IS_MOBILE ? 0.72 : 0.85);   // 0.35..1.0
+  const DPR_CAP_HIGH = IS_MOBILE ? 1.2 : 1.5;
   const DPR_CAP_LOW  = 1.0;
   let dprCap = DPR_CAP_HIGH;
 
@@ -116,7 +117,6 @@
   const clamp = (v,a,b)=>Math.max(a, Math.min(b, v));
 
   function resize(){
-    // keep it smooth: cap DPR based on current quality
     const dpr = Math.max(1, Math.min(dprCap, window.devicePixelRatio || 1));
     canvas.width  = Math.floor(innerWidth * dpr);
     canvas.height = Math.floor(innerHeight * dpr);
@@ -128,52 +128,50 @@
   resize();
 
   // ============================================================
-  // Fade / blend (slightly less dark overall)
+  // Fade / blend (brighter, less dark)
   // ============================================================
   function fadeBg(){
     ctx.globalCompositeOperation = "source-over";
-    // lower alpha = brighter trails + less “darkness”
-    ctx.fillStyle = "rgba(0,0,0,0.12)";
+    ctx.fillStyle = "rgba(0,0,0,0.11)";
     ctx.fillRect(0,0,innerWidth,innerHeight);
     ctx.globalCompositeOperation = "lighter";
   }
 
   // ============================================================
-  // Fireworks particles (optimized: minimal shadow + batching)
+  // Fireworks particles (optimized)
   // ============================================================
   const particles = [];
   const rockets = [];
   const gravity = 0.055;
   const air = 0.985;
 
-  // Keep counts bounded (BIG perf win)
   function trimArrays(){
-    const maxParticles = Math.floor(900 * QUALITY);
-    const maxInk = 16000; // large but bounded
+    const maxParticles = Math.floor((IS_MOBILE ? 620 : 900) * QUALITY);
+    const maxInk = 16000;
     if(particles.length > maxParticles) particles.splice(0, particles.length - maxParticles);
     if(ink.length > maxInk) ink.splice(0, ink.length - maxInk);
   }
 
   function burst(x, y, hue = rand(0,360)){
-    const n = Math.floor(rand(70, 120) * QUALITY); // fewer particles
-    const base = rand(2.4, 5.2);
+    // Mobile: fewer particles to keep FPS + keep message readable
+    const n = Math.floor(rand(IS_MOBILE ? 40 : 70, IS_MOBILE ? 70 : 120) * QUALITY);
+    const base = rand(2.3, 5.0);
 
-    // quick ring flash (no heavy blur)
-    particles.push({ x,y, a:0.55, dec:0.10, h:hue, s:rand(14,26), flash:true });
+    particles.push({ x,y, a:0.55, dec:0.11, h:hue, s:rand(14,24), flash:true });
 
     for(let i=0;i<n;i++){
       const ang = rand(0, Math.PI*2);
-      const sp = base * rand(0.45, 1.12);
+      const sp = base * rand(0.45, 1.10);
       particles.push({
         x, y, px:x, py:y,
         vx: Math.cos(ang)*sp,
         vy: Math.sin(ang)*sp,
         a: 1,
-        dec: rand(0.010, 0.018), // die faster
+        dec: rand(0.011, 0.020),
         h: (hue + rand(-14,14) + 360) % 360,
-        s: rand(0.8, 1.8),
-        lw: rand(0.8, 1.4),
-        spark: Math.random() < 0.20
+        s: rand(0.8, 1.7),
+        lw: rand(0.8, 1.35),
+        spark: Math.random() < 0.18
       });
     }
     trimArrays();
@@ -182,8 +180,8 @@
   function launchRocket(x, y = innerHeight, hue = rand(0,360), targetY = rand(innerHeight*0.12, innerHeight*0.42)){
     rockets.push({
       x, y,
-      vx: rand(-0.7, 0.7),
-      vy: rand(-10.0, -13.0),
+      vx: rand(-0.65, 0.65),
+      vy: rand(-9.8, -12.8),
       h: hue,
       targetY,
       trail:[]
@@ -198,16 +196,15 @@
       r.x += r.vx; r.y += r.vy;
 
       r.trail.push({x:r.x, y:r.y});
-      const maxTrail = Math.floor(18 + 10*QUALITY);
+      const maxTrail = Math.floor((IS_MOBILE ? 16 : 18) + 10*QUALITY);
       if(r.trail.length > maxTrail) r.trail.shift();
 
-      // trail (NO shadowBlur = huge perf win)
       for(let t=1;t<r.trail.length;t++){
         const p0 = r.trail[t-1];
         const p1 = r.trail[t];
         const a = t / r.trail.length;
         ctx.lineWidth = 1.1;
-        ctx.strokeStyle = `hsla(${r.h},100%,74%,${a*0.22})`;
+        ctx.strokeStyle = `hsla(${r.h},100%,74%,${a*0.20})`;
         ctx.beginPath();
         ctx.moveTo(p0.x, p0.y);
         ctx.lineTo(p1.x, p1.y);
@@ -216,7 +213,7 @@
 
       ctx.fillStyle = `hsla(${r.h},100%,78%,0.95)`;
       ctx.beginPath();
-      ctx.arc(r.x, r.y, 2.2, 0, Math.PI*2);
+      ctx.arc(r.x, r.y, 2.1, 0, Math.PI*2);
       ctx.fill();
 
       if(r.y <= r.targetY || r.vy > -1.0){
@@ -227,7 +224,6 @@
   }
 
   function updateParticles(){
-    // batch draw by reducing state changes (we still draw individually but keep it light)
     for(let i=particles.length-1;i>=0;i--){
       const p = particles[i];
       p.a -= p.dec;
@@ -248,7 +244,6 @@
         const a = Math.max(0, p.a);
         const lum = p.spark ? 86 : 78;
 
-        // streak
         ctx.lineWidth = p.lw;
         ctx.strokeStyle = `hsla(${p.h},100%,${lum}%,${a})`;
         ctx.beginPath();
@@ -256,7 +251,6 @@
         ctx.lineTo(p.x, p.y);
         ctx.stroke();
 
-        // dot
         ctx.fillStyle = `hsla(${p.h},100%,${lum+4}%,${a})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.s, 0, Math.PI*2);
@@ -268,18 +262,17 @@
   }
 
   // ============================================================
-  // Firework-writing that STAYS
-  // Big perf win: draw ink into an offscreen canvas once, then blit.
+  // Firework-writing that STAYS (ink cached in offscreen canvas)
   // ============================================================
   const stamp = document.createElement("canvas");
   const sctx = stamp.getContext("2d");
 
   const inkLayer = document.createElement("canvas");
   const ik = inkLayer.getContext("2d");
+
   function resizeInkLayer(){
     inkLayer.width = canvas.width;
     inkLayer.height = canvas.height;
-    // reset transform for drawing in CSS pixels
     const dpr = canvas.width / innerWidth;
     ik.setTransform(dpr,0,0,dpr,0,0);
     ik.clearRect(0,0,innerWidth,innerHeight);
@@ -288,7 +281,7 @@
   addEventListener("resize", resizeInkLayer, { passive:true });
 
   const writers = [];
-  const ink = []; // still keep for bounds, but we render to inkLayer when added
+  const ink = [];
 
   function sampleTextPoints(text, fontPx, weight){
     const font = `${weight} ${fontPx}px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
@@ -307,7 +300,7 @@
 
     const img = sctx.getImageData(0,0,stamp.width,stamp.height).data;
     const pts = [];
-    const step = Math.max(2, Math.floor(fontPx / 26)); // denser, but still sane
+    const step = Math.max(2, Math.floor(fontPx / (IS_MOBILE ? 28 : 26)));
 
     for(let y=0;y<stamp.height;y+=step){
       for(let x=0;x<stamp.width;x+=step){
@@ -323,21 +316,19 @@
     const dy = y + rand(-0.35,0.35);
     const s  = rand(0.9, 1.65);
 
-    // store a little (for bounds only)
     ink.push({x:dx,y:dy,h,s});
-    // draw ONCE onto inkLayer (major perf)
-    ik.fillStyle = `hsla(${h},100%,84%,0.98)`;
+
+    ik.fillStyle = `hsla(${h},100%,86%,0.985)`;
     ik.beginPath();
     ik.arc(dx, dy, s, 0, Math.PI*2);
     ik.fill();
   }
 
   function drawInkLayer(){
-    // add a soft halo behind the whole message (cheap + makes text “less dark”)
-    // Only draw halo for the first few seconds and then occasionally to keep it subtle
+    // subtle halo to make the message pop
     ctx.save();
     ctx.globalCompositeOperation = "screen";
-    ctx.globalAlpha = 0.26;
+    ctx.globalAlpha = IS_MOBILE ? 0.22 : 0.26;
     ctx.filter = "blur(8px)";
     ctx.drawImage(inkLayer, 0, 0, innerWidth, innerHeight);
     ctx.filter = "none";
@@ -351,17 +342,16 @@
     const pad = Math.max(18, Math.floor(Math.min(innerWidth, innerHeight) * 0.04));
 
     let cx;
-    if(anchor === "left")  cx = pad + w/2;
-    if(anchor === "right") cx = innerWidth - pad - w/2;
-    if(anchor === "center")cx = innerWidth/2;
+    if(anchor === "left")   cx = pad + w/2;
+    if(anchor === "right")  cx = innerWidth - pad - w/2;
+    if(anchor === "center") cx = innerWidth/2;
 
     const ox = cx - w/2;
     const oy = y - h/2;
 
     const pick = Math.min(pts.length, Math.floor(pts.length * 0.92));
 
-    // small burst near the text, but lighter
-    burst(cx + rand(-26,26), y + rand(-16,16), rand(0,360));
+    burst(cx + rand(-24,24), y + rand(-14,14), rand(0,360));
 
     for(let i=0;i<pick;i++){
       const p = pts[(Math.random()*pts.length)|0];
@@ -374,11 +364,11 @@
       writers.push({
         x:sx, y:sy, px:sx, py:sy,
         tx, ty,
-        vx: rand(-1.2, 1.2),
-        vy: rand(-7.4, -3.6),
+        vx: rand(-1.15, 1.15),
+        vy: rand(-7.0, -3.4),
         h: rand(0,360),
         s: rand(0.9, 2.0),
-        lw: rand(0.8, 1.4)
+        lw: rand(0.8, 1.35)
       });
     }
   }
@@ -398,13 +388,13 @@
       w.x += w.vx; w.y += w.vy;
 
       ctx.lineWidth = w.lw;
-      ctx.strokeStyle = `hsla(${w.h},100%,76%,0.92)`;
+      ctx.strokeStyle = `hsla(${w.h},100%,78%,0.92)`;
       ctx.beginPath();
       ctx.moveTo(w.px, w.py);
       ctx.lineTo(w.x, w.y);
       ctx.stroke();
 
-      ctx.fillStyle = `hsla(${w.h},100%,86%,0.95)`;
+      ctx.fillStyle = `hsla(${w.h},100%,88%,0.95)`;
       ctx.beginPath();
       ctx.arc(w.x, w.y, w.s, 0, Math.PI*2);
       ctx.fill();
@@ -417,13 +407,19 @@
   }
 
   // ============================================================
-  // Safe zones
+  // Layout + safe zones (MOBILE FIX: center stack)
   // ============================================================
-  const layout = {
-    happy: { text:"HAPPY",    anchor:"left",   yPct: 0.20, fontScale: 0.14 },
-    newy:  { text:"NEW YEAR", anchor:"right",  yPct: 0.20, fontScale: 0.14 },
-    name:  { text:"CIANNA",   anchor:"center", yPct: 0.46, fontScale: 0.18 }
-  };
+  const layout = IS_MOBILE
+    ? {
+        happy: { text:"HAPPY",    anchor:"center", yPct: 0.18, fontScale: 0.16 },
+        newy:  { text:"NEW YEAR", anchor:"center", yPct: 0.28, fontScale: 0.16 },
+        name:  { text:"CIANNA",   anchor:"center", yPct: 0.46, fontScale: 0.22 }
+      }
+    : {
+        happy: { text:"HAPPY",    anchor:"left",   yPct: 0.20, fontScale: 0.14 },
+        newy:  { text:"NEW YEAR", anchor:"right",  yPct: 0.20, fontScale: 0.14 },
+        name:  { text:"CIANNA",   anchor:"center", yPct: 0.46, fontScale: 0.18 }
+      };
 
   function computeTextBox(text, anchor, y, fontPx, weight=900){
     sctx.font = `${weight} ${fontPx}px system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
@@ -447,7 +443,7 @@
       const fontPx = Math.floor(base * item.fontScale);
       const y = innerHeight * item.yPct;
       const b = computeTextBox(item.text, item.anchor, y, fontPx, 900);
-      const pad = Math.max(42, Math.floor(fontPx * 0.65));
+      const pad = Math.max(IS_MOBILE ? 54 : 42, Math.floor(fontPx * 0.68));
       zones.push({ x: b.x - pad, y: b.y - pad, w: b.w + pad*2, h: b.h + pad*2 });
     }
     return zones;
@@ -467,7 +463,7 @@
   }
 
   // ============================================================
-  // Compliments (nice font + fewer + lighter)
+  // Compliments (handwritten + MOBILE limits)
   // ============================================================
   const textBursts = [];
   const compliments = [
@@ -480,12 +476,14 @@
     "u da real baddie queen",
   ];
 
-const complimentFont =
-  `700 34px "Caveat", "Kalam", ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial`;
+  const complimentFont = IS_MOBILE
+    ? `700 24px "Caveat", "Kalam", ui-rounded, system-ui`
+    : `700 34px "Caveat", "Kalam", ui-rounded, system-ui`;
 
   function spawnCompliment(zones){
-    // fewer total compliments = smoother
-    if(textBursts.length > Math.floor(7 * QUALITY)) return;
+    // HARD cap to prevent phone clutter
+    if (IS_MOBILE && textBursts.length > 3) return;
+    if (!IS_MOBILE && textBursts.length > Math.floor(7 * QUALITY)) return;
 
     const p = pickSafePoint(
       zones,
@@ -497,10 +495,10 @@ const complimentFont =
     textBursts.push({
       x: p.x,
       y: p.y,
-      vx: rand(-0.14, 0.14),
-      vy: rand(-0.62, -0.35),
+      vx: rand(-0.12, 0.12),
+      vy: rand(-0.58, -0.32),
       a: 1,
-      life: rand(150, 240),
+      life: rand(IS_MOBILE ? 140 : 150, IS_MOBILE ? 210 : 240),
       age: 0,
       rot: rand(-0.03, 0.03),
       vr: rand(-0.0008, 0.0008),
@@ -515,18 +513,15 @@ const complimentFont =
       t.age++;
       const k = t.age / t.life;
 
-      // fade
       const fadeIn = Math.min(1, k / 0.16);
-      const fadeOut = Math.max(0, (1 - k) / 0.40);
+      const fadeOut = Math.max(0, (1 - k) / 0.42);
       t.a = Math.min(fadeIn, fadeOut);
 
-      // motion
       t.x += t.vx;
       t.y += t.vy;
-      t.vy += gravity * 0.015;
+      t.vy += gravity * 0.013;
       t.rot += t.vr;
 
-      // keep out of safe zones
       if(zones.some(z => pointInRect(t.x, t.y, z))){
         t.x += (t.x < innerWidth/2 ? -1 : 1) * 2.2;
         t.y += 2.4;
@@ -541,11 +536,11 @@ const complimentFont =
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
 
-      // soft outline for readability (no blur)
       ctx.lineWidth = 3;
-      ctx.strokeStyle = `hsla(${t.h},100%,25%,0.22)`;
+      ctx.strokeStyle = `rgba(0,0,0,0.22)`;
       ctx.strokeText(t.txt, 0, 0);
-      ctx.fillStyle = `hsla(${t.h},100%,90%,0.95)`;
+
+      ctx.fillStyle = `hsla(${t.h},100%,92%,0.98)`;
       ctx.fillText(t.txt, 0, 0);
 
       ctx.restore();
@@ -558,7 +553,7 @@ const complimentFont =
   }
 
   // ============================================================
-  // Sequence timing
+  // Sequence timing (MOBILE FIX: use layout anchors)
   // ============================================================
   let start = performance.now();
   let doneWriting = false;
@@ -571,31 +566,32 @@ const complimentFont =
     const fontSmall = Math.floor(base * layout.happy.fontScale);
     const fontName  = Math.floor(base * layout.name.fontScale);
 
-    const topY = innerHeight * layout.happy.yPct;
-    const midY = innerHeight * layout.name.yPct;
+    const topY1 = innerHeight * layout.happy.yPct;
+    const topY2 = innerHeight * layout.newy.yPct;
+    const midY  = innerHeight * layout.name.yPct;
 
     if(step === 0 && t > 0.25){
-      spawnWritingAnchored("HAPPY", "left",  topY, fontSmall, 900);
+      spawnWritingAnchored(layout.happy.text, layout.happy.anchor,  topY1, fontSmall, 900);
       step = 1;
     }
     if(step === 1 && t > 0.85){
-      spawnWritingAnchored("NEW YEAR", "right", topY, fontSmall, 900);
+      spawnWritingAnchored(layout.newy.text, layout.newy.anchor, topY2, fontSmall, 900);
       step = 2;
     }
     if(step === 2 && t > 1.35){
-      spawnWritingAnchored("CIANNA", "center", midY, fontName, 900);
+      spawnWritingAnchored(layout.name.text, layout.name.anchor, midY, fontName, 900);
       step = 3;
       doneWriting = true;
     }
   }
 
   // ============================================================
-  // Continuous fireworks (SAFE-ZONE ONLY) - lighter rate
+  // Continuous fireworks (SAFE-ZONE ONLY) - slower on mobile
   // ============================================================
   let nextLaunch = 0;
   function scheduleLaunch(now){
-    const base = prefersReduced ? 760 : 520;
-    nextLaunch = now + rand(base, base + 520);
+    const base = prefersReduced ? 760 : (IS_MOBILE ? 900 : 520);
+    nextLaunch = now + rand(base, base + 600);
   }
 
   function safeLaunch(zones){
@@ -607,7 +603,6 @@ const complimentFont =
     launchRocket(burstPt.x + rand(-30,30), innerHeight, rand(0,360), burstPt.y);
   }
 
-  // Click bursts, but not on the safe zones
   addEventListener("pointerdown", (e)=>{
     const zones = getSafeZones();
     if(!zones.some(z => pointInRect(e.clientX, e.clientY, z))){
@@ -620,33 +615,28 @@ const complimentFont =
   // ============================================================
   let nextCompliment = 0;
   function scheduleCompliment(now){
-    const base = prefersReduced ? 520 : 260;
-    nextCompliment = now + rand(base, base + 420);
+    const base = prefersReduced ? 520 : (IS_MOBILE ? 520 : 260);
+    nextCompliment = now + rand(base, base + 520);
   }
 
   function autoQuality(now){
     const dt = now - lastNow;
     lastNow = now;
 
-    // exponential moving average
     avgDt = avgDt * 0.92 + dt * 0.08;
 
-    // every ~30 frames, adjust quality
     perfSample++;
     if(perfSample < 30) return;
     perfSample = 0;
 
-    // target ~16.7ms (60fps). If slower, reduce.
     if(avgDt > 20){
       QUALITY = clamp(QUALITY * 0.90, 0.40, 1.0);
-      dprCap = DPR_CAP_LOW;     // drop resolution
-      // also clear some load
+      dprCap = DPR_CAP_LOW;
       particles.splice(0, Math.floor(particles.length*0.25));
     } else if(avgDt < 17.5){
       QUALITY = clamp(QUALITY * 1.03, 0.40, 1.0);
       dprCap = DPR_CAP_HIGH;
     }
-    // resize only if dprCap changed materially
     resize();
   }
 
@@ -657,7 +647,6 @@ const complimentFont =
     sequence(now);
     fadeBg();
 
-    // draw main message (cached layer) + writers
     ctx.globalCompositeOperation = "lighter";
     drawInkLayer();
     updateWriters();
@@ -670,16 +659,14 @@ const complimentFont =
     }
 
     if(now > nextCompliment){
-      // fewer compliments overall
       spawnCompliment(zones);
-      if(!prefersReduced && Math.random() < 0.18) spawnCompliment(zones);
+      if(!prefersReduced && !IS_MOBILE && Math.random() < 0.18) spawnCompliment(zones);
       scheduleCompliment(now);
     }
 
     updateRockets();
     updateParticles();
 
-    // compliments last
     ctx.globalCompositeOperation = "source-over";
     updateCompliments(zones);
 
